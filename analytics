@@ -1,0 +1,63 @@
+USE DATABASE ECOMMERCE_DB;
+USE SCHEMA ANALYTICS;
+USE WAREHOUSE COMPUTE_WHS;
+USE ROLE DATA_ENGINEER;
+
+-- create analytics table
+
+CREATE DYNAMIC TABLE IF NOT EXISTS AGG_SALES_DAILY
+  TARGET_LAG = '5 MINUTES'
+  WAREHOUSE  = compute_whs
+AS
+SELECT
+  o.order_date,
+  p.category,
+  p.subcategory,
+  c.country,
+  c.loyalty_tier,
+  COUNT(DISTINCT o.order_id)    AS total_orders,
+  COUNT(DISTINCT o.customer_id) AS unique_customers,
+  SUM(o.quantity)               AS total_units_sold,
+  COUNT(CASE WHEN o.status = 'RETURNED' THEN 1 END) AS returns_count
+FROM STAGING.STG_ORDERS o
+JOIN STAGING.STG_CUSTOMERS c ON o.customer_id = c.customer_id
+JOIN STAGING.STG_PRODUCTS  p ON o.product_id  = p.product_id
+GROUP BY 1, 2, 3, 4, 5;
+
+CREATE DYNAMIC TABLE IF NOT EXISTS ANALYTICS.CUSTOMER_LTV
+  TARGET_LAG = '10 MINUTES'
+  WAREHOUSE  = compute_whs
+AS
+WITH order_stats AS (
+  SELECT
+    customer_id,
+    COUNT(DISTINCT order_id)     AS frequency,
+    MAX(order_date)              AS last_order_date,
+    DATEDIFF('day', MAX(order_date), CURRENT_DATE()) AS recency_days,
+    SUM(quantity * unit_price * (1 - discount)) AS monetary_value,
+    MIN(order_date)              AS first_order_date
+  FROM STAGING.STG_ORDERS
+  WHERE status NOT IN ('CANCELLED', 'RETURNED')
+  GROUP BY 1
+)
+SELECT
+  c.customer_id,
+  c.full_name,
+  c.loyalty_tier,
+  c.country,
+  os.frequency,
+  os.recency_days,
+  os.monetary_value,
+  os.last_order_date,
+  NTILE(5) OVER (ORDER BY os.recency_days  DESC) AS recency_score,
+  NTILE(5) OVER (ORDER BY os.frequency)          AS frequency_score,
+  NTILE(5) OVER (ORDER BY os.monetary_value)     AS monetary_score,
+  CASE
+    WHEN NTILE(5) OVER (ORDER BY os.monetary_value) >= 4
+     AND NTILE(5) OVER (ORDER BY os.frequency)     >= 4 THEN 'Champions'
+    WHEN NTILE(5) OVER (ORDER BY os.recency_days DESC) >= 4 THEN 'Recent High-Value'
+    WHEN NTILE(5) OVER (ORDER BY os.recency_days DESC) <= 2 THEN 'At Risk'
+    ELSE 'Regular'
+  END AS clv_segment
+FROM STAGING.STG_CUSTOMERS c
+JOIN order_stats os ON c.customer_id = os.customer_id;
