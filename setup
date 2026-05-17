@@ -1,0 +1,57 @@
+create database if not exists ecommerce_db
+DATA_RETENTION_TIME_IN_DAYS = 7 ;
+
+create database if not exists ecommerce_db_dev
+clone ecommerce_db;
+
+create schema if not exists raw  DATA_RETENTION_TIME_IN_DAYS = 3 ;
+create schema if not exists staging  DATA_RETENTION_TIME_IN_DAYS = 5 ;
+create schema if not exists analytics  DATA_RETENTION_TIME_IN_DAYS = 7 ;
+create schema if not exists security;
+create schema if not exists monitor ;
+
+create warehouse if not exists compute_whs
+warehouse_size = 'small'
+auto_suspend = 30 
+auto_resume = True ;
+
+create resource monitor if not exists ecommerce_monitor
+  with
+    credit_quota = 100
+    frequency = monthly
+    start_timestamp = immediately
+    triggers 
+      on 75 percent do notify 
+      on 90 percent do notify
+      on 100 percent do suspend ;
+
+create role data_engineer;
+create role data_analyst ;
+create role data_scientist;
+create role analyst_masked;
+create role analyst_unmasked;
+create role region_mena;
+create role region_europe;
+
+grant role data_engineer to role sysadmin ;
+grant role data_analyst to role data_engineer ;
+grant role data_scientist to role data_engineer ;
+grant role analyst_masked to role data_analyst ;
+
+grant create integration on account to role data_engineer ;
+grant usage on database ecommerce_db to role data_engineer ;
+grant usage on database ecommerce_db to role data_analyst ;
+grant usage on database ecommerce_db to role data_scientist ;
+
+grant all on schema ecommerce_db.raw to role data_engineer ;
+grant all on schema ecommerce_db.staging to role data_engineer ;
+grant all on schema ecommerce_db.analytics to role data_engineer ;
+
+grant usage on schema ecommerce_db.analytics to role data_analyst ;
+grant select on all tables in schema ecommerce_db.analytics to role data_analyst ;
+grant select on future tables in schema ecommerce_db.analytics to role data_analyst ;
+
+grant usage on schema ecommerce_db.staging to role data_scientist ;
+grant usage on schema ecommerce_db.analytics to role data_scientist ;
+grant select on all tables in schema ecommerce_db.analytics to role data_scientist ;
+grant select on all tables in schema ecommerce_db.staging to role data_scientist ;
