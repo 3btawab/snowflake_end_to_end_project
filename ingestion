@@ -1,0 +1,148 @@
+use database ecommerce_db;
+use schema raw;
+use warehouse compute_whs ;
+use role data_engineer;
+
+create or replace file format csvfiles
+type = 'csv' 
+FIELD_DELIMITER = ','
+SKIP_HEADER = 1
+FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+TRIM_SPACE = TRUE
+EMPTY_FIELD_AS_NULL = TRUE
+ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE;
+
+create or replace file format jsonfiles
+type = json 
+
+create or replace file format parquetfiles
+type = parquet 
+
+
+create or replace storage integration azure_integration
+type = external_stage 
+storage_provider = 'azure'
+enabled = true
+azure_tenant_id = '0bc92751-071a-4e2c-a48b-633206fef374'
+storage_allowed_locations = ('azure://snowstorageee.blob.core.windows.net/data')
+
+desc storage integration azure_integration
+
+create or replace stage azure_int
+storage_integration = azure_integration
+url = 'azure://snowstorageee.blob.core.windows.net/data'
+directory = (enable=true)
+
+list @azure_int
+
+create or replace notification integration snowpipenotification 
+type = queue
+enabled = true
+notification_provider = 'azure_storage_queue'
+azure_tenant_id = '0bc92751-071a-4e2c-a48b-633206fef374'
+azure_storage_queue_primary_uri = 'https://snowstorageee.queue.core.windows.net/queueproject'
+
+desc integration snowpipenotification 
+
+create or replace table raw.raw_orders(
+  order_id         varchar,
+  customer_id      varchar,
+  product_id       varchar,
+  quantity         varchar,
+  unit_price       varchar,
+  discount         varchar,
+  status           varchar,
+  payment_method   varchar,
+  shipping_address varchar,
+  order_date       varchar,
+  shipped_date     varchar,
+  _source_file     varchar,
+  _load_timestamp  timestamp_ntz default current_timestamp(),
+  _row_hash        varchar
+)
+
+create or replace pipe orders_pipe
+auto_ingest = true
+integration = snowpipenotification
+as
+copy into raw_orders (
+    order_id,
+    customer_id,
+    product_id,
+    quantity,
+    unit_price,
+    discount,
+    status,
+    payment_method,
+    shipping_address,
+    order_date,
+    shipped_date
+)
+from (
+    select
+        $1,$2,$3,$4,$5,
+        $6,$7,$8,$9,$10,$11
+    from @azure_int/orders
+)
+file_format = (format_name = csvfiles);
+
+
+
+create or replace table raw.raw_customers 
+(datacolumn variant) 
+
+create or replace pipe customers_pipe
+auto_ingest = true
+integration = snowpipenotification
+as
+copy into raw_customers
+from (
+    select $1
+    from @azure_int/customers
+)
+file_format = (format_name = jsonfiles);
+
+create or replace table raw_products 
+(datacolumn variant) 
+
+create or replace pipe products_pipe
+auto_ingest = true
+integration = snowpipenotification
+as
+copy into raw_products
+from (
+    select $1
+    from @azure_int/products
+)
+file_format = (format_name = parquetfiles);ECOMMERCE_DB.STAGING
+
+alter pipe orders_pipe refresh;
+alter pipe customers_pipe refresh;
+alter pipe products_pipe refresh;
+
+select * from raw_orders;
+
+select * from raw_products
+
+select
+    datacolumn:product_id::string as product_id,
+    datacolumn:product_name::string as product_name,
+    datacolumn:brand::string as brand,
+    datacolumn:category::string as category,
+    datacolumn:cost_price::number as cost_price,
+    datacolumn:sell_price::number as sell_price,
+    datacolumn:stock_qty::number as stock_qty
+from raw_products;
+
+select * from raw_customers;
+
+select
+    value:customer_id::string as customer_id,
+    value:full_name::string as full_name,
+    value:email::string as email,
+    value:gender::string as gender,
+    value:lifetime_value::number as lifetime_value,
+    value:address:city::string as city,
+    value:address:country::string as country,
+    value:address:zip::string as zip
+from raw_customers, lateral flatten(input => datacolumn);
