@@ -7,8 +7,6 @@ clone ecommerce_db;
 create schema if not exists raw  DATA_RETENTION_TIME_IN_DAYS = 3 ;
 create schema if not exists staging  DATA_RETENTION_TIME_IN_DAYS = 5 ;
 create schema if not exists analytics  DATA_RETENTION_TIME_IN_DAYS = 7 ;
-create schema if not exists security;
-create schema if not exists monitor ;
 
 create warehouse if not exists compute_whs
 warehouse_size = 'small'
